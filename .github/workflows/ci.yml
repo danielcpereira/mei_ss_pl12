@@ -1,0 +1,91 @@
+name: 1 - Continuous Integration
+run-name: "${{ github.workflow }}"
+
+on:
+  push:
+    branches: ["main"]
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository }}/secure-coding-api
+
+jobs:
+  test:
+    name: Test REST API source code
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run unit/API tests
+        run: |
+          python -m pytest -v                                                                          
+
+
+  build:
+    name: Build and test Docker image
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Docker image locally
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: secure-coding-api:${{ github.sha }}
+
+      - name: Run container
+        run: |
+          docker run -d \
+            --name secure-coding-api \
+            -p 5001:5001 \
+            secure-coding-api:${{ github.sha }}
+
+      - name: Smoke test container
+        run: |
+          sleep 5
+          curl --fail http://127.0.0.1:5001/
+
+      - name: Show container logs if needed
+        if: failure()
+        run: |
+          docker logs secure-coding-api
+
+      - name: Stop container
+        if: always()
+        run: |
+          docker stop secure-coding-api
+          docker rm secure-coding-api
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
