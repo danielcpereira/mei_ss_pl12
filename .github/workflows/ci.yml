@@ -102,6 +102,14 @@ jobs:
           load: true
           tags: secure-coding-api:${{ github.sha }}
 
+      - name: Scan Docker image with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: secure-coding-api:${{ github.sha }}
+          format: table
+          exit-code: "0"
+          severity: HIGH,CRITICAL
+
       - name: Run container
         run: |
           docker run -d \
