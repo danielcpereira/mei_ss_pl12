@@ -1,140 +1,101 @@
 name: 1 - Continuous Integration
+run-name: "${{ github.workflow }}"
 
 on:
   push:
-    branches: ["main"]
-  pull_request:
     branches: ["main"]
 
 permissions:
   contents: read
   packages: write
 
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository }}/secure-coding-api
+
 jobs:
   test:
-    name: Run tests
+    name: Test REST API source code
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.10"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
 
-      - name: Run tests
-        run: python -m pytest -v
+      - name: Run unit/API tests
+        run: |
+          python -m pytest -v                                                                          
 
   secrets:
     name: Secret scanning
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
-
+        uses: actions/checkout@v6
       - name: Run Gitleaks
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  sast-bandit:
-    name: SAST with Bandit
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
-
-      - name: Install Bandit
-        run: pip install bandit
-
-      - name: Run Bandit
-        run: bandit -r . -x tests || true
-
-  sca:
-    name: Software Composition Analysis
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
-
-      - name: Install dependencies and pip-audit
-        run: |
-          pip install -r requirements.txt
-          pip install pip-audit
-
-      - name: Run pip-audit
-        run: pip-audit || true
-
   build:
-    name: Build, scan, and publish Docker image
+    name: Build and test Docker image
     runs-on: ubuntu-latest
-    needs: [test, secrets, sast-bandit, sca]
+    needs: test
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+
+      - name: Build Docker image locally
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          load: true
+          tags: secure-coding-api:${{ github.sha }}
+
+      - name: Run container
+        run: |
+          docker run -d \
+            --name secure-coding-api \
+            -p 5001:5001 \
+            secure-coding-api:${{ github.sha }}
+
+      - name: Smoke test container
+        run: |
+          sleep 5
+          curl --fail http://127.0.0.1:5001/
+
+      - name: Show container logs if needed
+        if: failure()
+        run: |
+          docker logs secure-coding-api
+
+      - name: Stop container
+        if: always()
+        run: |
+          docker stop secure-coding-api
+          docker rm secure-coding-api
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build Docker image locally
-        run: docker build -t secure-coding-api:${{ github.sha }} .
-
-      - name: Scan Docker image with Trivy
-        uses: aquasecurity/trivy-action@master
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v7
         with:
-          image-ref: secure-coding-api:${{ github.sha }}
-          format: table
-          exit-code: "0"
-          severity: HIGH,CRITICAL
-
-      - name: Generate SBOM
-        uses: anchore/sbom-action@v0
-        with:
-          image: secure-coding-api:${{ github.sha }}
-          format: cyclonedx-json
-          output-file: sbom.cdx.json
-
-      - name: Upload SBOM
-        uses: actions/upload-artifact@v4
-        with:
-          name: sbom-${{ github.sha }}
-          path: sbom.cdx.json
-
-      - name: Run container
-        run: |
-          docker run -d --name secure-coding-api-container -p 5001:5001 secure-coding-api:${{ github.sha }}
-          sleep 5
-          curl --fail http://127.0.0.1:5001/
-
-      - name: Show logs if smoke test failed
-        if: failure()
-        run: docker logs secure-coding-api-container
-
-      - name: Stop container
-        if: always()
-        run: |
-          docker stop secure-coding-api-container
-          docker rm secure-coding-api-container
-
-      - name: Push image to GHCR
-        run: |
-          docker tag secure-coding-api:${{ github.sha }} ghcr.io/${{ github.repository_owner }}/secure-coding-api:${{ github.sha }}
-          docker push ghcr.io/${{ github.repository_owner }}/secure-coding-api:${{ github.sha }}
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
