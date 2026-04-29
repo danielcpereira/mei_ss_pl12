@@ -16,7 +16,6 @@ jobs:
   test:
     name: Test REST API source code
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -32,7 +31,7 @@ jobs:
 
       - name: Run unit/API tests
         run: |
-          python -m pytest -v                                                                          
+          python -m pytest -v
 
   secrets:
     name: Secret scanning
@@ -40,16 +39,36 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+
       - name: Run Gitleaks
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  sast-bandit:
+    name: SAST with Bandit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+
+      - name: Install Bandit
+        run: |
+          pip install bandit
+
+      - name: Run Bandit
+        run: |
+          bandit -r . -x tests || true
+
   build:
     name: Build and test Docker image
     runs-on: ubuntu-latest
     needs: test
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
