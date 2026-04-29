@@ -107,7 +107,7 @@ jobs:
         with:
           image-ref: secure-coding-api:${{ github.sha }}
           format: table
-          exit-code: "0"
+          exit-code: "1"
           severity: HIGH,CRITICAL
 
       - name: Run container
