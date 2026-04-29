@@ -1,0 +1,53 @@
+name: 2 - Continuous Deployment
+run-name: "${{ github.workflow }}"
+
+on:
+  workflow_run:
+    workflows: ["1 - Continuous Integration"]
+    types:
+      - completed
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  deploy-staging:
+    name: Deploy to staging
+    runs-on: ubuntu-latest
+    environment: staging
+    if: github.event.workflow_run.conclusion == 'success'
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull image
+        run: |
+          docker pull ghcr.io/${{ github.repository }}/secure-coding-api:${{ github.event.workflow_run.head_sha }}
+
+      - name: Run staging container
+        run: |
+          docker run -d \
+            --name secure-coding-api-staging \
+            -p 5001:5001 \
+            ghcr.io/${{ github.repository }}/secure-coding-api:${{ github.event.workflow_run.head_sha }}
+
+      - name: Smoke test staging
+        run: |
+          sleep 5
+          curl --fail http://127.0.0.1:5001/
+
+      - name: Show logs if needed
+        if: failure()
+        run: |
+          docker logs secure-coding-api-staging
+
+      - name: Stop staging container
+        if: always()
+        run: |
+          docker stop secure-coding-api-staging
+          docker rm secure-coding-api-staging
